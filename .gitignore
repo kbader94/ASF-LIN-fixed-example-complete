@@ -1,0 +1,9 @@
+.vs/**
+*/Debug/**
+**.bin
+**.hex
+**.eep
+**.efl
+**.lss
+**.map
+**.srec
