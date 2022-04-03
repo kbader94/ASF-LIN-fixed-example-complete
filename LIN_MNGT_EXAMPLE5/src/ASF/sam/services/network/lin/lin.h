@@ -94,10 +94,10 @@ typedef  struct {
     uint8_t*            uc_pt_data;
 
     //! Pointer on the function which handles the data. This
-    //! has as parameter 'uc_pt_data'. This function could update
+    //! has as parameter 'uc_pt_data' and 'uc_len'. This function could update
     //! the received 'signals' and could capture and store signals
     //! for the next transmission.
-    void         (*pt_function)(uint8_t*);
+    void         (*pt_function)(uint8_t*, uint8_t);
 } st_lin_message;
 
 /*! @brief Error report definitions

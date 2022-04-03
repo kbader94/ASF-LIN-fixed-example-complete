@@ -150,12 +150,12 @@ static void lin_master_request_ID12(void)
 	lin_send_cmd(LIN_MASTER_NODE_NUM, LIN_FRAME_ID_12, sizeof(lin_data_node));	
 }
 
-static void lin_master_receive_ID12(uint8_t *uc_buf)
+static void lin_master_receive_ID12(uint8_t *uc_buf, uint8_t uc_len)
 {
 	
 	if (uc_buf[0] == LIN_FIRST_BYTE) {
 		puts("LIN response VALID!");
-		for(uint8_t i = 0; i < sizeof(uc_buf); i++){
+		for(uint8_t i = 0; i < uc_len; i++){
 			printf("Byte %d is %x", i, uc_buf[i]);
 		}
 		lin_led1_counter++;
@@ -225,11 +225,13 @@ void USART0_Handler(void)
 /**
  * \brief lin_slave_task_ID12
  */
-static void  lin_slave_task_ID12(uint8_t *uc_buf)
+static void  lin_slave_task_ID12(uint8_t *uc_buf, uint8_t uc_len)
 {
+
 	if (uc_buf[0] == LIN_FIRST_BYTE) {
-		puts("LIN message VALID!");
-		for(uint8_t i = 0; i < sizeof(uc_buf); i++){
+		printf("LIN message VALID! - %d bytes", uc_len);
+		
+		for(uint8_t i = 0; i < uc_len; i++){
 			printf("%x\n", uc_buf[i]);
 		}
 		lin_led1_counter++;

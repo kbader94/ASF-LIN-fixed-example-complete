@@ -211,13 +211,12 @@ static uint8_t lin_rx_response(uint8_t uc_node, uint8_t uc_len)
  * \return Status PASS / FAIL.
  *
  */
-static void lin_get_response(uint8_t uc_node, uint8_t *p_data)
+static void lin_get_response(uint8_t uc_node, uint8_t uc_len, uint8_t *p_data)
 {
-	uint8_t i, uc_len;
-
-	uc_len = usart_lin_get_data_length(usart_lin_node[uc_node]);
-	for (i = 0; i < uc_len; i++) {
-		(*p_data++) = lin_rx_buffer_node[uc_node][i];
+	
+	for (uint8_t i = 0; i < uc_len; i++) {
+		p_data[i] = lin_rx_buffer_node[uc_node][i];
+		printf("%x\n",lin_rx_buffer_node[uc_node][i]);
 	}
 }
 
@@ -258,14 +257,14 @@ void usart_lin_handler(uint8_t uc_node)
 			pdc_disable_transfer(g_p_pdc[uc_node],PERIPH_PTCR_RXTEN);
 			
 			if(lin_descript_list_node[uc_node][uc_handle].lin_cmd == SUBSCRIBE){
-			
-				lin_get_response(0,
+				uint8_t uc_len = usart_lin_get_data_length(usart_lin_node[uc_node]);
+				lin_get_response(uc_node, uc_len,
 						lin_descript_list_node[uc_node][uc_handle].uc_pt_data);
 				/* Start of the associated task */
 
 				if (lin_descript_list_node[uc_node][uc_handle].pt_function != NULL) {
 					lin_descript_list_node[uc_node][uc_handle].pt_function(
-							lin_descript_list_node[uc_node][uc_handle].uc_pt_data);
+							lin_descript_list_node[uc_node][uc_handle].uc_pt_data, uc_len);
 				}
 				
 			}
