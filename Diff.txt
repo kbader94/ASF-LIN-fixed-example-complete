@@ -37,7 +37,11 @@ Additionally adds support for Master Node Subscribe mode and Slave Node Publish 
  }
  
  # Bug 2 - Fix for passing data to callback function correctly
- 
+ # Bug 7 - Use LINTC instead of ENDRX Interrupt.
+ # This bug prevents proper reception of LIN frames. Testing stepped by frame on
+ # the original example revealed the slave only received every 4th frame. This ensures
+ # the interrupt is called on every LIN frame and is what the SAM3X datasheet specifies(Page 814).
+
  /**
 @@ -198,17 +202,15 @@ static uint8_t lin_rx_response(uint8_t uc_node, uint8_t uc_len)
   * the handle in the descriptor list.
