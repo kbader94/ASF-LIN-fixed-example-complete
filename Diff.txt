@@ -1,0 +1,426 @@
+# ASF-LIN-fixed-example-complete
+Patches to Microchip's ASF LIN stack for the SAM3X family of microprocessors to fix errors present in existing stack which prevent proper LIN frame reception. 
+Additionally adds support for Master Node Subscribe mode and Slave Node Publish mode.
+
+# Bugs present in original LIN stack
+
+# lin.c
+
+# Bug 1 - transmit offset by 1 byte
+
+@@ -152,12 +156,13 @@ static uint8_t lin_tx_header_and_response(uint8_t uc_node, uint8_t uc_handle,
+ 
+ static uint8_t lin_tx_response(uint8_t uc_node, uint8_t *p_data, uint8_t uc_len)
+ {
+ 	/* Copy the data contained in the descriptor list into the tx buffer */
+-	memcpy(&lin_tx_buffer_node[uc_node][0], p_data, uc_len + 1);
+-
++	for(uint8_t i = 0; i < uc_len; i ++){
++		lin_tx_buffer_node[uc_node][i] = p_data[i];
++	}
+ 	g_st_packet[uc_node].ul_addr = (uint32_t)lin_tx_buffer_node[uc_node];
+ 	g_st_packet[uc_node].ul_size = uc_len;
+ 	pdc_tx_init(g_p_pdc[uc_node], &g_st_packet[uc_node], NULL);
+ 	pdc_enable_transfer(g_p_pdc[uc_node], PERIPH_PTCR_TXTEN);
+ 
+@@ -179,12 +184,11 @@ static uint8_t lin_tx_response(uint8_t uc_node, uint8_t *p_data, uint8_t uc_len)
+ static uint8_t lin_rx_response(uint8_t uc_node, uint8_t uc_len)
+ {
+ 	g_st_packet[uc_node].ul_addr = (uint32_t)&lin_rx_buffer_node;
+ 	g_st_packet[uc_node].ul_size = uc_len;
+ 	pdc_rx_init(g_p_pdc[uc_node], &g_st_packet[uc_node], NULL);
+-
+-	usart_enable_interrupt(USART0, US_IER_ENDRX);
++	usart_enable_interrupt(USART0, US_IER_LINTC);
+ 
+ 	return PASS;
+ }
+ 
+ # Bug 2 - Fix for passing data to callback function correctly
+ 
+ /**
+@@ -198,17 +202,15 @@ static uint8_t lin_rx_response(uint8_t uc_node, uint8_t uc_len)
+  * the handle in the descriptor list.
+  *
+  * \return Status PASS / FAIL.
+  *
+  */
+-static void lin_get_response(uint8_t uc_node, uint8_t *p_data)
++static void lin_get_response(uint8_t uc_node, uint8_t uc_len, uint8_t *p_data)
+ {
+-	uint8_t i, uc_len;
+-
+-	uc_len = usart_lin_get_data_length(usart_lin_node[uc_node]);
+-	for (i = 0; i < uc_len; i++) {
+-		(*p_data++) = lin_rx_buffer_node[uc_node][i];
++	
++	for (uint8_t i = 0; i < uc_len; i++) {
++		p_data[i] = lin_rx_buffer_node[uc_node][i];
+ 	}
+ }
+ 
+ # Bug 3 - Fix LIN stack only responding on every 4th frame. Use LINTC instead of ENDRX as specified by SAM3X datasheet(page 814)
+
+ 
+ /**
+  * \brief USART LIN interrupt handler: manage ID reception.
+@@ -219,39 +221,45 @@ static void lin_get_response(uint8_t uc_node, uint8_t *p_data)
+ void usart_lin_handler(uint8_t uc_node)
+ {
+ 	uint8_t uc_handle = 0xFF;
+ 	uint8_t i;
+ 	uint32_t ul_status;
++	uint8_t last_id = 0;
+ 
+ 	ul_status = usart_get_status(usart_lin_node[uc_node]);
++	last_id = usart_lin_read_identifier(usart_lin_node[uc_node]);
++	usart_reset_status(usart_lin_node[uc_node]);
+ 
+ 	/* Check ID Value for the current message */
+ 	for (i = 0; i < NUMBER_OF_LIN_FRAMES_NODE; i++) {
+-		if (lin_descript_list_node[uc_node][i].uc_id ==
+-				usart_lin_read_identifier(usart_lin_node[uc_node])) {
++		if (lin_descript_list_node[uc_node][i].uc_id == last_id) {
+ 			uc_handle = i;
+ 			break;
+ 		}
+ 	}
+-
++	
+ 	/* Check if the ID received is registered into the lin description list */
+ 	if (uc_handle != 0xFF) {
+-		if (ul_status & US_CSR_ENDRX) {
++		if (ul_status & US_CSR_LINTC) {
+ 			pdc_disable_transfer(g_p_pdc[uc_node],PERIPH_PTCR_RXTEN);
+-
+-			lin_get_response(0,
+-					lin_descript_list_node[uc_node][uc_handle].uc_pt_data);
+-			/* Start of the associated task */
+-
+-			if (lin_descript_list_node[uc_node][uc_handle].pt_function != NULL) {
+-				lin_descript_list_node[uc_node][uc_handle].pt_function(
++			
++			if(lin_descript_list_node[uc_node][uc_handle].lin_cmd == SUBSCRIBE){
++				uint8_t uc_len = usart_lin_get_data_length(usart_lin_node[uc_node]);
++				lin_get_response(uc_node, uc_len,
+ 						lin_descript_list_node[uc_node][uc_handle].uc_pt_data);
++				/* Start of the associated task */
++
++				if (lin_descript_list_node[uc_node][uc_handle].pt_function != NULL) {
++					lin_descript_list_node[uc_node][uc_handle].pt_function(
++							lin_descript_list_node[uc_node][uc_handle].uc_pt_data, uc_len);
++				}
++				
+ 			}
+ 		}
+ 
+ 		/* Check Error Status */
+-		usart_reset_status(usart_lin_node[uc_node]);
++		
+ 		if (ul_status & US_CSR_LIN_ERROR) {
+ 			lin_descript_list_node[uc_node][uc_handle].uc_status = 
+ 				(ul_status & US_CSR_LIN_ERROR) >> USART_LIN_ERROR_OFFSET;
+ 
+ 			lin_last_errors_node[uc_node][(((uint8_t)
+      
+# Possible Bug 4 - Use DLC instead of IDCHR for data length in LIN 2.0.
+May not be a bug per se, but seems preferable. I don't believe the LIN 2.0 spec
+calls for a data length determined by the ID char and most use cases, such as this example would 
+rather define it themselves. I've also removed the configuration of the LIN frame slot here, which
+is not necessary in a LIN slave but should probably still be included in the LIN stack for master mode.
+      
+@@ -271,16 +279,14 @@ void usart_lin_handler(uint8_t uc_node)
+ 			/* Configure Checksum */
+ 			usart_lin_enable_checksum(usart_lin_node[uc_node]);
+ 			/* Configure Checksum Type */
+ 			usart_lin_set_checksum_type(usart_lin_node[uc_node],
+ 					USART_LIN_ENHANCED_CHECKSUM);
+-			/* Configure Frameslot */
+-			usart_lin_enable_frame_slot(usart_lin_node[uc_node]);
++			//usart_lin_enable_frame_slot(usart_lin_node[uc_node]);
+ 			/* Configure Frame Length */
+-
+ 			usart_lin_set_data_len_mode(usart_lin_node[uc_node],
+-					USART_LIN_DLM_IDCHR);
++					USART_LIN_DLM_DLC);
+ 			usart_lin_set_response_data_len(usart_lin_node[uc_node],
+ 					lin_descript_list_node[uc_node][uc_handle].uc_dlc);
+ #elif (USART_LIN_VERSION == LIN_1x)
+ 			/* Configure Parity */
+ 			usart_lin_enable_parity(usart_lin_node[uc_node]);
+@@ -291,11 +297,11 @@ void usart_lin_handler(uint8_t uc_node)
+ 					USART_LIN_CLASSIC_CHECKSUM);
+ 			/* Configure Frameslot */
+ 			usart_lin_enable_frame_slot(usart_lin_node[uc_node]);
+ 			/* Configure Frame Length */
+ 			usart_lin_set_data_len_mode(usart_lin_node[uc_node],
+-					USART_LIN_DLM_DLC);
++					USART_LIN_DLM_IDCHR);
+ #endif
+ 
+ 			/* Diagnostic frames in LIN 2.0/2.1 */
+ 			if ((usart_lin_read_identifier(usart_lin_node[uc_node]) >=
+ 					USART_LIN_DIAGNOSTIC_FRAME_ID)) {
+          
+
+# Lin.h
+
+# Bug # 2 - Fix to pass data to callback function properly. Send data length as parameter so user can properly access data in pointer
+         
+@@ -92,14 +92,14 @@ typedef  struct {
+     //! Pointer on the data buffer, the data buffer where the
+     //! bytes of the LIN response are stored
+     uint8_t*            uc_pt_data;
+ 
+     //! Pointer on the function which handles the data. This
+-    //! has as parameter 'uc_pt_data'. This function could update
++    //! has as parameter 'uc_pt_data' and 'uc_len'. This function could update
+     //! the received 'signals' and could capture and store signals
+     //! for the next transmission.
+-    void         (*pt_function)(uint8_t*);
++    void         (*pt_function)(uint8_t*, uint8_t);
+ } st_lin_message;
+ 
+ /*! @brief Error report definitions
+  */
+ #define  LIN_OVERLOAD_INT     ((uint16_t)0x00FF)  //!< More than ONE interrupt in the same time !
+
+ 
+ # lin_example_mngt.c
+
+@@ -94,21 +97,22 @@
+ /** First byte for test */
+ #define LIN_FIRST_BYTE        0x55
+ 
+ /** Local Buffer for emission */
+ uint8_t lin_data_node[8];
+-
+ static uint32_t lin_led1_counter = 0;
++_Bool master_subscribe = false;
++_Bool slave = false;//this is not used and should be removed
+ 
+ /** LIN master node number */
+ #define LIN_MASTER_NODE_NUM   0
+ 
+ /** Timer counter channel used */
+ #define TC_CHANNEL            0
+ 
+ /** Timer counter frequency in Hz */
+-#define TC_FREQ               20
++#define TC_FREQ               2
+ 
+ /** LIN slave node number */
+ #define LIN_SLAVE_NODE_NUM    0
+ 
+ /** LED0 wait count */
+ 
+ # Enhancement #1 & #2 - Demonstrate Master Subscribe mode & Slave Publish mode respectively
+ # Added console output for debugging purposes, not necessary but helpful.
+ 
+@@ -123,34 +127,70 @@ static void display_menu(void)
+ 			"------\n\r"
+ 			"  Set LIN node property:\r");
+ 
+ 	puts("  -------------------------------------------\n\r"
+ 			"  m: Set LIN node as Master PUBLISH \n\r"
++			"  r: Set LIN node as Master SUBSCRIBER \n\r"
+ 			"  s: Set LIN node as Slave SUBSCRIBER \n\r"
++			"  p: Set LIN node as Slave PUBLISH \n\r"
+ 			"  h: Display menu \n\r"
+ 			"------\n\r\r");
+ }
+ 
+ /**
+- * \brief lin_master_task_ID12
++ * \brief lin_master_send_ID12
++ * send LIN header and data
+  */
+-static void  lin_master_task_ID12(void)
++static void  lin_master_send_ID12(void)
+ {
+ 	lin_data_node[0] = LIN_FIRST_BYTE;
+ 	lin_send_cmd(LIN_MASTER_NODE_NUM, LIN_FRAME_ID_12, sizeof(lin_data_node));
+ }
+ 
++/*
++ * \brief request LIN data from slave
++ */
++static void lin_master_request_ID12(void)
++{
++
++	lin_send_cmd(LIN_MASTER_NODE_NUM, LIN_FRAME_ID_12, sizeof(lin_data_node));	
++}
++
++/*
++ * \brief callback to receive data from slave
++ */
++static void lin_master_receive_ID12(uint8_t *uc_buf, uint8_t uc_len)
++{
++	
++	if (uc_buf[0] == LIN_FIRST_BYTE) {
++		puts("LIN response received\n");
++		lin_led1_counter++;
++		if (lin_led1_counter == LIN_LED0_WAIT_COUNTER) {
++			LED_Toggle(LED0_GPIO);
++			lin_led1_counter = 0;
++		}
++	}
++
++	LED_Toggle(LED1_GPIO);
++	
++}
++
+ /**
+- * \brief Interrupt handler for TC0. Record the number of bytes received,
+- * and then restart a read transfer on the USART if the transfer was stopped.
++ * \brief Interrupt handler for TC0. Either sends a full frame OR 
++ * requests data from slave.
+  */
+ void TC0_Handler(void)
+ {
++
+ 	/* Read TC0 Status. */
+ 	tc_get_status(TC0, 0);
+-
+-	lin_master_task_ID12();
++	if(master_subscribe){
++		lin_master_request_ID12();
++	} else {
++		lin_master_send_ID12();
++	}
++	
+ }
+ 
+ /**
+  * \brief Configure Timer Counter 0 (TC0) to generate an interrupt every 200ms.
+  * This interrupt will be used to flush USART input and echo back.
+@@ -182,18 +222,25 @@ static void configure_tc(void)
+  * next receive.
+  */
+ void USART0_Handler(void)
+ {
+ 	usart_lin_handler(LIN_SLAVE_NODE_NUM);
++	usart_lin_handler(LIN_MASTER_NODE_NUM);
+ }
+ 
+ /**
+  * \brief lin_slave_task_ID12
+  */
+-static void  lin_slave_task_ID12(uint8_t *uc_buf)
++static void  lin_slave_task_ID12(uint8_t *uc_buf, uint8_t uc_len)
+ {
+ 	if (uc_buf[0] == LIN_FIRST_BYTE) {
++		printf("LIN message received \n");
++		
++		for(uint8_t i = 0; i < uc_len; i++){
++			printf("%x\n", uc_buf[i]);
++		}
+ 		lin_led1_counter++;
+ 		if (lin_led1_counter == LIN_LED0_WAIT_COUNTER) {
+ 			LED_Toggle(LED0_GPIO);
+ 			lin_led1_counter = 0;
+ 		}
+@@ -271,11 +318,11 @@ int main(void)
+ 			tc_start(TC0, 0);
+ 			break;
+ 
+ 		case 's':
+ 		case 'S':
+-			puts("-- Set LIN to Slave mode\n\r");
++			puts("-- Set LIN to Slave SUBSCRIBE mode\n\r");
+ 			/* Node 0:  LIN_SLAVE_MODE */
+ 			lin_init(USART0, false, LIN_SLAVE_NODE_NUM, 9600,
+ 					sysclk_get_cpu_hz());
+ 
+ 			/* Configure lin_descriptor */
+@@ -292,11 +339,77 @@ int main(void)
+ 			/* Configure and enable interrupt of USART. */
+ 			NVIC_EnableIRQ(USART0_IRQn);
+ 			usart_enable_interrupt(USART0, US_IER_LINID);
+ 			/* In case of Slave Mode, only wait for ID reception. */
+ 			break;
++		
++		case 'p':
++		case 'P':
++			puts("-- Set LIN to Slave PUBLISH mode\n\r");
++			/* Node 0:  LIN_SLAVE_MODE */
++			lin_init(USART0, false, LIN_SLAVE_NODE_NUM, 9600,
++			sysclk_get_cpu_hz());
++			
++			/* set response */
++			lin_data_node[0] = 0x55;
++			lin_data_node[1] = 0xDE;
++			lin_data_node[2] = 0xAD;
++			lin_data_node[3] = 0xBE;
++			lin_data_node[4] = 0xEF;
++			lin_data_node[5] = 0x01;
++			lin_data_node[6] = 0x02;
++			lin_data_node[7] = 0x03;
++			
++			/* Configure lin_descriptor */
++			/* Init LIN data Node 0 */
++			/* Object 0 */
++			lin_desc.uc_id = LIN_FRAME_ID_12;
++			lin_desc.uc_dlc = sizeof(lin_data_node);
++			lin_desc.lin_cmd = PUBLISH;
++			lin_desc.uc_status = 0;
++			lin_desc.uc_pt_data = lin_data_node;
++			lin_desc.pt_function = lin_slave_task_ID12;
++			lin_register_descriptor(LIN_SLAVE_NODE_NUM, 0, &lin_desc);
++
++			/* Configure and enable interrupt of USART. */
++			NVIC_EnableIRQ(USART0_IRQn);
++			usart_enable_interrupt(USART0, US_IER_LINID);
++			/* In case of Slave Mode, only wait for ID reception. */
++			break;
++
++		case 'r':
++		case 'R':
++			puts("-- Set LIN to Master SUBSCRIBE mode\n\r");
++			/* Node 0:  LIN_MASTER_MODE */
++			lin_init(USART0, true, LIN_MASTER_NODE_NUM, 9600,
++			sysclk_get_cpu_hz());
+ 
++			/* Configure lin_descriptor */
++			/* Init LIN data Node 0 */
++			/* Object 0 */
++			lin_desc.uc_id = LIN_FRAME_ID_12;
++			lin_desc.uc_dlc = sizeof(lin_data_node);
++			lin_desc.lin_cmd = SUBSCRIBE;
++			lin_desc.uc_status = 0;
++			lin_desc.uc_pt_data = lin_data_node;
++			lin_desc.pt_function = lin_master_receive_ID12;
++			lin_register_descriptor(LIN_MASTER_NODE_NUM, 0, &lin_desc);
++			
++			/* only send ID, subscribe to response*/
++			master_subscribe = true;
++
++			/* Configure and enable interrupt of USART. */
++			NVIC_EnableIRQ(USART0_IRQn);
++			usart_enable_interrupt(USART0, US_IER_LINID);
++			/* In case of Subscribe Mode, only wait for ID reception. */
++			
++			/* Start timer to periodically request data*/
++			configure_tc();
++			tc_start(TC0, 0);
++			break;
++			
++			
+ 		case 'h':
+ 		case 'H':
+ 			display_menu();
+ 			break;
+ 		}
+    
+# Additional possible bugs not yet addressed
+
+# Possible Bug 6 - Node number bug
+
+This current implementation, like the original, has the slave and master using the same node number. 
+Using a different number for either doesn't work, but may be desirable in certain use cases? I haven't looked into this too much.
+It's doubtful a user would want a device to act as a slave and a master on the same LIN frame, on the same device. 
+However, a user may want to implement multiple slaves on a single device in order to separate concerns, and this would currently not work.
+
+
+
+
