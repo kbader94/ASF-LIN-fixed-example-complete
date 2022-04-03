@@ -157,17 +157,10 @@ static uint8_t lin_tx_header_and_response(uint8_t uc_node, uint8_t uc_handle,
  */
 static uint8_t lin_tx_response(uint8_t uc_node, uint8_t *p_data, uint8_t uc_len)
 {
-	printf("sending data wit length %d ", uc_len);
-		for(uint8_t i = 0; i < uc_len; i++){
-			printf("%x\n",p_data[i]);
-		}
-	puts("sent");
 	/* Copy the data contained in the descriptor list into the tx buffer */
-	memcpy(&lin_tx_buffer_node[uc_node][0], p_data, uc_len + 1);
-	for(uint8_t i = 0; i < uc_len; i++){
-		printf("%x\n",lin_tx_buffer_node[uc_node][i]);
+	for(uint8_t i = 0; i < uc_len; i ++){
+		lin_tx_buffer_node[uc_node][i] = p_data[i];
 	}
-	printf("\n\n");
 	g_st_packet[uc_node].ul_addr = (uint32_t)lin_tx_buffer_node[uc_node];
 	g_st_packet[uc_node].ul_size = uc_len;
 	pdc_tx_init(g_p_pdc[uc_node], &g_st_packet[uc_node], NULL);
@@ -216,7 +209,6 @@ static void lin_get_response(uint8_t uc_node, uint8_t uc_len, uint8_t *p_data)
 	
 	for (uint8_t i = 0; i < uc_len; i++) {
 		p_data[i] = lin_rx_buffer_node[uc_node][i];
-		printf("%x\n",lin_rx_buffer_node[uc_node][i]);
 	}
 }
 
@@ -236,21 +228,15 @@ void usart_lin_handler(uint8_t uc_node)
 	ul_status = usart_get_status(usart_lin_node[uc_node]);
 	last_id = usart_lin_read_identifier(usart_lin_node[uc_node]);
 	usart_reset_status(usart_lin_node[uc_node]);
-	
-	if (ul_status & US_CSR_LINTC) puts("LINTC");
-	if (ul_status & US_CSR_LINID) puts("LINID");
 
 	/* Check ID Value for the current message */
 	for (i = 0; i < NUMBER_OF_LIN_FRAMES_NODE; i++) {
 		if (lin_descript_list_node[uc_node][i].uc_id == last_id) {
-					//puts("has handle");
 			uc_handle = i;
 			break;
 		}
 	}
 	
-	
-
 	/* Check if the ID received is registered into the lin description list */
 	if (uc_handle != 0xFF) {
 		if (ul_status & US_CSR_LINTC) {
@@ -488,7 +474,6 @@ uint8_t lin_send_cmd(uint8_t uc_node,uint8_t uc_id,uint8_t uc_len)
 
 		/* In Subscribe, the USART Receive the response */
 		case SUBSCRIBE:
-			puts("getting response");
 			usart_lin_set_tx_identifier(usart_lin_node[uc_node], uc_id);
 			lin_rx_response(uc_node, uc_len);
 			break;

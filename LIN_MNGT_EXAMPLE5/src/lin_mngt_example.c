@@ -101,6 +101,7 @@
 uint8_t lin_data_node[8];
 static uint32_t lin_led1_counter = 0;
 _Bool master_subscribe = false;
+_Bool slave = false;//temp fix for Node num bug
 
 /** LIN master node number */
 #define LIN_MASTER_NODE_NUM   0
@@ -136,7 +137,8 @@ static void display_menu(void)
 }
 
 /**
- * \brief lin_master_task_ID12
+ * \brief lin_master_send_ID12
+ * send LIN header and data
  */
 static void  lin_master_send_ID12(void)
 {
@@ -144,20 +146,23 @@ static void  lin_master_send_ID12(void)
 	lin_send_cmd(LIN_MASTER_NODE_NUM, LIN_FRAME_ID_12, sizeof(lin_data_node));
 }
 
+/*
+ * \brief request LIN data from slave
+ */
 static void lin_master_request_ID12(void)
 {
 
 	lin_send_cmd(LIN_MASTER_NODE_NUM, LIN_FRAME_ID_12, sizeof(lin_data_node));	
 }
 
+/*
+ * \brief callback to receive data from slave
+ */
 static void lin_master_receive_ID12(uint8_t *uc_buf, uint8_t uc_len)
 {
 	
 	if (uc_buf[0] == LIN_FIRST_BYTE) {
-		puts("LIN response VALID!");
-		for(uint8_t i = 0; i < uc_len; i++){
-			printf("Byte %d is %x", i, uc_buf[i]);
-		}
+		puts("LIN response received\n");
 		lin_led1_counter++;
 		if (lin_led1_counter == LIN_LED0_WAIT_COUNTER) {
 			LED_Toggle(LED0_GPIO);
@@ -170,8 +175,8 @@ static void lin_master_receive_ID12(uint8_t *uc_buf, uint8_t uc_len)
 }
 
 /**
- * \brief Interrupt handler for TC0. Record the number of bytes received,
- * and then restart a read transfer on the USART if the transfer was stopped.
+ * \brief Interrupt handler for TC0. Either sends a full frame OR 
+ * requests data from slave.
  */
 void TC0_Handler(void)
 {
@@ -227,9 +232,9 @@ void USART0_Handler(void)
  */
 static void  lin_slave_task_ID12(uint8_t *uc_buf, uint8_t uc_len)
 {
-
+	puts("a rseponse");
 	if (uc_buf[0] == LIN_FIRST_BYTE) {
-		printf("LIN message VALID! - %d bytes", uc_len);
+		printf("LIN message received \n");
 		
 		for(uint8_t i = 0; i < uc_len; i++){
 			printf("%x\n", uc_buf[i]);
